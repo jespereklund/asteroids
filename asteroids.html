@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <style>
+    	* { padding: 0; margin: 0; }
+    	canvas { background: #000000; display: block; margin: 0 auto; }
+    </style>
+</head>
+<body onLoad="init()">
+
+<canvas id="myCanvas"></canvas>
+
+<script>
+
+const canvas = document.getElementById("myCanvas");
+const ctx = canvas.getContext("2d");
+
+const shapes = {
+  ship: [[0,20],[15,-20],[-15,-20]],
+  shot: [[-3,-3], [3,-3], [3,3], [-3,3]],
+  asteroids:
+    [
+      [[0,-40],[-31,-25],[-39,9],[-17,36],[17,36],[39,9],[31,-25]],
+      [[30,0],[15,-25.5],[-15,-25.5],[-30,0],[-15,25.5],[15,25.5]],
+      [[0,-15],[-15,-4.5],[-9,12],[9,12],[15,-4.5]],
+      [[6,-6],[-6,-6],[-6,6],[6,6]]
+    ],
+  ufos:
+    [
+      [[-30,0],[0,20],[30,0],[0,-20]],
+      [[-15,0],[0,10],[15,0],[0,-10]]
+    ]
+}
+
+//radiuses and radiuses squared of objects
+const radiuses = {
+  ship: [20, 400],
+  asteroids: [[40,1600],[30,900],[15,225],[6,36]],
+  shot: [4,16],
+  ufos: [[30, 900],[15, 225]]
+}
+
+//calculated sums of radiuses and sum of radiuses squared
+//for asteroids and ship
+const sum_asteroids_ship = [
+  [radiuses.asteroids[0][0]+radiuses.ship[0], radiuses.asteroids[0][1]+radiuses.ship[1]],
+  [radiuses.asteroids[1][0]+radiuses.ship[0], radiuses.asteroids[1][1]+radiuses.ship[1]],
+  [radiuses.asteroids[2][0]+radiuses.ship[0], radiuses.asteroids[2][1]+radiuses.ship[1]],
+  [radiuses.asteroids[3][0]+radiuses.ship[0], radiuses.asteroids[3][1]+radiuses.ship[1]]
+  ];
+
+//for asteroids and shots
+const sum_asteriods_shot = [
+  [radiuses.asteroids[0][0]+radiuses.shot[0], radiuses.asteroids[0][1]+radiuses.shot[1]],
+  [radiuses.asteroids[1][0]+radiuses.shot[0], radiuses.asteroids[1][1]+radiuses.shot[1]],
+  [radiuses.asteroids[2][0]+radiuses.shot[0], radiuses.asteroids[2][1]+radiuses.shot[1]],
+  [radiuses.asteroids[3][0]+radiuses.shot[0], radiuses.asteroids[3][1]+radiuses.shot[1]]
+  ];
+
+//for shots and ship
+const sum_shot_ship = [
+  radiuses.shot[0]+radiuses.ship[0],
+  radiuses.shot[1]+radiuses.ship[1]
+];
+
+//for ufos and ship
+const sum_ufos_ship = [
+  [radiuses.ufos[0][0]+radiuses.ship[0], radiuses.ufos[0][1]+radiuses.ship[1]], 
+  [radiuses.ufos[1][0]+radiuses.ship[0], radiuses.ufos[1][1]+radiuses.ship[1]]
+];
+
+//for shots and ufos
+const sum_shot_ufos = [
+  [radiuses.shot[0]+radiuses.ufos[0][0], radiuses.shot[0]+radiuses.ufos[0][1]],  
+  [radiuses.shot[0]+radiuses.ufos[1][0], radiuses.shot[0]+radiuses.ufos[1][1]],  
+];
+
+const turnValue = 0.2;
+const acceleration = 2;
+const braking = 1;
+const speedMax = 20;
+const AsteroidMaxSpeed = 10;
+const shotSpeed = 14;
+const shotDie = 100;
+const ufoWaitSpawn = 100;
+const ufoMaxX = innerWidth + 100;
+const ufoSpeed = 5;
+const ufoShotDie = 200;
+
+var ticks = 0;
+var score = 0;
+var bigText = "";
+var keys = {};
+var fireOnlyOnce = false;
+var running = true;
+
+var gameProps = {
+  ship: {
+    x: window.innerWidth / 2,
+    y: window.innerHeight / 2,
+    speed: 0,
+    orientation: Math.PI,
+    direction: Math.PI,
+    color: "#ff0000"
+  },
+  shots : [],
+  asteroids: [],
+  ufos: [],
+  ufosShots: [],
+  ufoNext: ufoWaitSpawn
+}
+
+function tick() {
+  handleKeys();
+  spawnUfo();
+  drawObjects();
+  moveObjects();
+  ufosShoot();
+  testCollisions();
+	ticks++;
+}
+
+function ufosShoot() {
+  for (var i=0; i<gameProps.ufos.length; i++) {
+    if (ticks > gameProps.ufos[i].nextShot) {
+      gameProps.ufos[i].nextShot = ticks + gameProps.ufos[i].ticksPerShoot;
+      dy = gameProps.ship.y - gameProps.ufos[i].y;
+      dx = gameProps.ship.x - gameProps.ufos[i].x;
+
+      //calculate angle from current ufo to the spaceship
+      //var a = Math.atan2(gameProps.ship.y - gameProps.ufos[i].y, gameProps.ship.x - gameProps.ufos[i].x); 
+      var a = Math.atan2(-dx, dy); 
+
+      gameProps.ufosShots.push(
+        {
+          x: gameProps.ufos[i].x + 20 * Math.sin(-a),
+          y: gameProps.ufos[i].y + 20 * Math.cos(a),
+          orientation: a,
+          die: ticks + ufoShotDie,
+          speed: shotSpeed,
+          dx: shotSpeed * Math.sin(-a),
+          dy: shotSpeed * Math.cos(a),
+          color: "#ffff00"
+        }
+      );        
+    }
+  }
+}
+
+function spawnUfo() {
+  //spawn ufo
+  if (gameProps.ufos.length == 0 && ticks >= gameProps.ufoNext) {
+    //console.log("spawn ufo");
+    var ufo =
+    {
+      x:-300,
+      y:50 + Math.random() * (window.innerHeight - 100),
+      dx: 0,
+      dy: 0,
+      orientation:0,
+      rotationSpeed:0,
+      type:0,
+      ticksPerShoot: 100,
+      nextShot: ticks + 50,
+      shootRandomness : 0,
+      color:"#0000ff"
+    }
+    gameProps.ufos.push(ufo);    
+    gameProps.ufoNext = ticks + ufoWaitSpawn;
+  }
+}
+
+function drawObjects() {
+	ctx.canvas.width  = window.innerWidth;
+	ctx.canvas.height = window.innerHeight;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawShip();
+  drawShots();
+  drawUfosShots();
+  drawAsteroids();
+  drawBigText(bigText);
+  drawUfos();
+  
+  //drawScore(score);
+}
+
+function moveObjects() {
+
+  if (!running) {
+    return
+  }
+
+  //ship
+  var dx = gameProps.ship.speed * Math.sin(-gameProps.ship.direction);
+  var dy = gameProps.ship.speed * Math.cos(gameProps.ship.direction);
+  gameProps.ship.x += dx;
+  gameProps.ship.y += dy;
+
+
+  //shots die
+	for (var i=gameProps.shots.length-1; i>=0; i--) {
+		if (ticks > gameProps.shots[i].die) {
+			gameProps.shots.splice(i,1)
+		}
+	}
+
+  //shots
+  for (var i=0; i<gameProps.shots.length; i++) {
+    gameProps.shots[i].x += gameProps.shots[i].dx;
+    gameProps.shots[i].y += gameProps.shots[i].dy;
+
+    gameProps.shots[i].x = (gameProps.shots[i].x > 0 ) ?
+      gameProps.shots[i].x % window.innerWidth : window.innerWidth;
+    gameProps.shots[i].y = (gameProps.shots[i].y > 0 ) ?
+      gameProps.shots[i].y % window.innerHeight : window.innerHeight;
+  }
+
+  //tile ship
+  gameProps.ship.x = tile(gameProps.ship.x, window.innerWidth);
+  gameProps.ship.y = tile(gameProps.ship.y, window.innerHeight);
+
+  //asteroids
+  for (var i=0; i<gameProps.asteroids.length; i++) {
+    gameProps.asteroids[i].x += gameProps.asteroids[i].dx;
+    gameProps.asteroids[i].y += gameProps.asteroids[i].dy;
+
+    gameProps.asteroids[i].x = tile(gameProps.asteroids[i].x, window.innerWidth);
+    gameProps.asteroids[i].y = tile(gameProps.asteroids[i].y, window.innerHeight);
+
+    gameProps.asteroids[i].orientation += gameProps.asteroids[i].rotationSpeed;
+  }
+  
+  //ufos
+  for (var i=0; i<gameProps.ufos.length; i++) {
+    gameProps.ufos[i].x += ufoSpeed;
+    //delete if out of bounce
+    if (gameProps.ufos[i].x > ufoMaxX ) {
+      gameProps.ufos.splice(i,1)
+      gameProps.ufoNext = ticks + ufoWaitSpawn;
+    }
+  } 
+  
+  //ufos shots, no tile
+  for (var i=0; i<gameProps.ufosShots.length; i++) {
+    gameProps.ufosShots[i].x += gameProps.ufosShots[i].dx;
+    gameProps.ufosShots[i].y += gameProps.ufosShots[i].dy;    
+  }
+
+  //ufo shots die
+  for (var i=0; i<gameProps.ufosShots.length; i++) {
+		if (ticks > gameProps.ufosShots[i].die) {
+			gameProps.ufosShots.splice(i,1)
+		}
+  }
+}
+
+function testCollisions() {
+
+  //all asteroids cleared
+  if ( gameProps.asteroids.length == 0) {
+    bigText = "DU VANDT!";
+    setTimeout(function(){ location.reload(); }, 1000);
+  }
+
+  var shipX = gameProps.ship.x;
+  var shipY = gameProps.ship.y;
+
+  for (var i=0; i<gameProps.asteroids.length; i++) {
+
+    //ship vs asteriods
+    var dx = shipX - gameProps.asteroids[i].x;
+    var dy = shipY - gameProps.asteroids[i].y;
+    var type = gameProps.asteroids[i].type;
+
+    //bounding box test
+    if ((Math.abs(dx) < sum_asteroids_ship[type][0])
+      && (Math.abs(dy) < sum_asteroids_ship[type][0])) {
+
+      //accurate pythagoras test
+      if ( ( dx*dx + dy*dy ) < sum_asteroids_ship[type][1] ) {
+        youDied();
+		  }
+    }
+
+    //shots
+    for (var j=0; j<gameProps.shots.length; j++) {
+
+      var dx = gameProps.asteroids[i].x - gameProps.shots[j].x;
+      var dy = gameProps.asteroids[i].y - gameProps.shots[j].y;
+
+      //bounding box test
+      if ((Math.abs(dx) < sum_asteriods_shot[type][0])
+        && (Math.abs(dy) < sum_asteriods_shot[type][0])) {
+
+        //accurate pythagoras test
+        if ( ( dx*dx + dy*dy ) < sum_asteriods_shot[type][1] ) {
+
+          var x = gameProps.asteroids[i].x;
+          var y = gameProps.asteroids[i].y;
+
+          gameProps.shots.splice(j,1);
+          gameProps.asteroids.splice(i,1);
+
+          if (type < shapes.asteroids.length-1) {
+            //populate smaller asteroids
+            for (var p=0; p<3; p++) {
+              var ori   = 2 * Math.random() * Math.PI;
+              var dx = AsteroidMaxSpeed * (0.5 - Math.random());
+              var dy = AsteroidMaxSpeed * (0.5 - Math.random());
+              var rotSpeed = 0.5 - Math.random();
+              addAsteroid(x, y, dx, dy, ori, rotSpeed, type+1, randPangColor());
+            }
+          }
+        }
+      }
+    }
+  }
+
+  //shots
+  for (var i=0; i<gameProps.shots.length; i++) {
+        
+    //shots vs ship
+    var dx = shipX - gameProps.shots[i].x;
+    var dy = shipY - gameProps.shots[i].y;
+
+    //bounding box test
+    if ((Math.abs(dx) < sum_shot_ship[0])
+      && (Math.abs(dy) < sum_shot_ship[0])) {
+
+      //accurate pythagoras test
+      if ( ( dx*dx + dy*dy ) < sum_shot_ship[1] ) {
+        youDied();
+      }
+    }
+    
+    //shots vs ufos
+    for (var j=0; j<gameProps.ufos.length; j++) {
+      //console.log("hejsa");
+      var dx = gameProps.shots[i].x - gameProps.ufos[j].x;
+      var dy = gameProps.shots[i].y - gameProps.ufos[j].y;
+
+      //bounding box test
+      if ((Math.abs(dx) < sum_shot_ufos[0][0])
+        && (Math.abs(dy) < sum_shot_ufos[0][0])) {
+
+        //accurate pythagoras test
+        if ( ( dx*dx + dy*dy ) < sum_shot_ufos[0][1] ) {
+          //console.log("shot hit ufo");
+          gameProps.shots.splice(i,1);
+          gameProps.ufos.splice(j,1);
+        }
+      }    
+    }
+  }
+  
+  //ufo shots vs ship
+  for (var i=0; i<gameProps.ufosShots.length; i++) {
+    var dx = shipX - gameProps.ufosShots[i].x;
+    var dy = shipY - gameProps.ufosShots[i].y;
+
+    //bounding box test
+    if ((Math.abs(dx) < sum_shot_ship[0])
+      && (Math.abs(dy) < sum_shot_ship[0])) {
+
+      //accurate pythagoras test
+      if ( ( dx*dx + dy*dy ) < sum_shot_ship[1] ) {
+        youDied();
+      }
+    }
+  }
+  
+  //ufos vs ship
+  for (var i=0; i<gameProps.ufos.length; i++) {
+    var dx = shipX - gameProps.ufos[i].x;
+    var dy = shipY - gameProps.ufos[i].y;
+
+    //bounding box test
+    if ((Math.abs(dx) < sum_ufos_ship[0][0])
+      && (Math.abs(dy) < sum_ufos_ship[0][0])) {
+
+      //accurate pythagoras test
+      if ( ( dx*dx + dy*dy ) < sum_ufos_ship[0][1] ) {
+        youDied();
+      }
+    }
+  }    
+}
+
+function youDied() {
+  bigText = "DU DØDE!";
+  running = false;
+  setTimeout(function(){ location.reload(); }, 1000);
+}
+
+function drawShip() {
+  drawShape(shapes.ship, gameProps.ship);
+}
+
+function drawShots() {
+  for (var i=0; i<gameProps.shots.length; i++) {
+    drawShape(shapes.shot, gameProps.shots[i]);
+  }
+}
+
+function drawUfosShots() {
+  for (var i=0; i<gameProps.ufosShots.length; i++) {
+    drawShape(shapes.shot, gameProps.ufosShots[i]);
+  }
+}
+
+function drawAsteroids() {
+  for (var i=0; i<gameProps.asteroids.length; i++) {
+    var type = gameProps.asteroids[i].type;
+    drawShape(shapes.asteroids[type], gameProps.asteroids[i]);
+  }
+}
+
+function drawUfos() {
+  for (var i=0; i<gameProps.ufos.length; i++) {
+    var type = gameProps.ufos[i].type;
+    //console.log(shapes.ufos[type]);
+    drawShape(shapes.ufos[type], gameProps.ufos[i]);
+  }
+}
+
+function drawShape(shape, props) {
+  ctx.beginPath();
+  //ctx.strokeStyle = "#FFFFFF";
+  //ctx.lineWidth = 2;
+
+  var center = {x: props.x, y: props.y};
+
+  var point = {x: shape[0][0], y: shape[0][1]};
+  var rotatedVector = rotateVector(center, point, props.orientation);
+  ctx.moveTo(rotatedVector.x, rotatedVector.y);
+
+  for (var i=1; i<shape.length; i++) {
+    var point = {x: shape[i][0], y: shape[i][1]};
+    var rotatedVector = rotateVector(center, point, props.orientation);
+    ctx.lineTo(rotatedVector.x, rotatedVector.y);
+  }
+
+  var point = {x: shape[0][0], y: shape[0][1]};
+  var rotatedVector = rotateVector(center, point, props.orientation);
+  ctx.lineTo(rotatedVector.x, rotatedVector.y);
+
+  ctx.fillStyle = props.color;
+  ctx.fill();
+  //ctx.stroke();
+}
+
+function rotateVector(center, point, rotation) {
+  var SA = Math.sin(rotation);
+  var CA = Math.cos(rotation);
+  var x = CA * point.x - SA * point.y;
+  var y = SA * point.x + CA * point.y;
+  var ret = {x:center.x+x, y:center.y+y};
+  return ret;
+}
+
+function drawScore(val) {
+	ctx.font = "30px Arial";
+	ctx.fillStyle = "#ffffff";
+	ctx.fillText(val,10,50);
+}
+
+function drawBigText(text) {
+	ctx.font = "50px Arial";
+  ctx.textAlign = "center";
+	ctx.fillStyle = "#ffffff";
+	ctx.fillText(text, window.innerWidth / 2, window.innerHeight / 2);
+}
+
+function populateAsteroids() {
+  var cx = window.innerWidth / 2;
+  var cy = window.innerHeight / 2;
+
+  for (var i=0; i<4; i++) {
+    var dist = 300 + Math.random() * 100;
+    var angle = Math.random() * 2 * Math.PI;
+    var x = cx + dist * Math.cos(-angle);
+    var y = cy + dist * Math.sin(angle);
+    var dx = AsteroidMaxSpeed * (0.5 - Math.random());
+    var dy = AsteroidMaxSpeed * (0.5 - Math.random());
+    var orientation = 2 * Math.random() * Math.PI;
+    var rotationSpeed  = 0.2 - Math.random() * 0.4;
+    var type = 0;
+    var color = randPangColor();
+    addAsteroid(x, y, dx, dy, orientation, rotationSpeed, type, color);
+  }
+}
+
+function addAsteroid(x, y, dx, dy, orientation, rotationSpeed, type, color) {
+  var ast =
+  {
+    x:x,
+    y:y,
+    dx: dx,
+    dy: dy,
+    orientation:orientation,
+    rotationSpeed:rotationSpeed,
+    type:type,
+    dx:dx,
+    dy:dy,
+    color:color
+  }
+  gameProps.asteroids.push(ast);
+}
+
+function doFire() {
+  gameProps.shots.push(
+    {
+      x: gameProps.ship.x + 20 * Math.sin(-gameProps.ship.orientation),
+      y: gameProps.ship.y + 20 * Math.cos(gameProps.ship.orientation),
+      orientation: gameProps.ship.orientation,
+      die: ticks + shotDie,
+      speed: shotSpeed + gameProps.ship.speed,
+      dx: (shotSpeed + gameProps.ship.speed) * Math.sin(-gameProps.ship.orientation),
+      dy: (shotSpeed + gameProps.ship.speed) * Math.cos(gameProps.ship.orientation),
+      color: "#ffff00"
+    }
+  );
+}
+
+function doTurn(value) {
+  gameProps.ship.orientation += value;
+  gameProps.ship.direction = gameProps.ship.orientation;
+}
+
+function doAccelerate(value) {
+  gameProps.ship.speed += value;
+  gameProps.ship.speed = (gameProps.ship.speed>0) ? gameProps.ship.speed : 0;
+  gameProps.ship.speed = (gameProps.ship.speed<speedMax) ? gameProps.ship.speed : speedMax;
+}
+
+function tile(val, size) {
+  return (val > 0 ) ? val % size : size;
+}
+
+function init() {
+  window.onkeyup = function(e) {  keys[e.keyCode] = false; }
+  window.onkeydown = function(e) { keys[e.keyCode] = true; }
+  populateAsteroids();
+}
+
+function handleKeys() {
+
+  if(!running) {
+    return;
+  }
+
+  //space is fire!
+  if(keys[32] == true) {
+    //only one shot per keystroke
+    if (fireOnlyOnce === false ) {
+      fireOnlyOnce = true;
+      doFire();
+    }
+  }
+  else
+  {
+    fireOnlyOnce = false;
+  }
+
+  //left
+  if(keys[37] == true) {
+    doTurn(-turnValue);
+  }
+
+  //right
+  if(keys[39] == true) {
+    doTurn(turnValue);
+  }
+
+  //up
+  if(keys[38] == true) {
+    doAccelerate(acceleration);
+  }
+  //pause
+  if(keys[80] == true) {
+    //running = !running;
+  }
+  else
+  {
+    doAccelerate(-braking);
+  }
+
+  //down
+  //if(keys[40] == true) {
+  //}
+}
+
+function hslToRgb(h, s, l){
+    var r, g, b;
+
+    if(s == 0){
+        r = g = b = l; // achromatic
+    }else{
+        var hue2rgb = function hue2rgb(p, q, t){
+            if(t < 0) t += 1;
+            if(t > 1) t -= 1;
+            if(t < 1/6) return p + (q - p) * 6 * t;
+            if(t < 1/2) return q;
+            if(t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+        }
+
+        var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        var p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+    }
+
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function randPangColor() {
+  var rgbColor = hslToRgb(Math.random(),1,0.5);
+  var color = "#"
+    + rgbColor[0].toString(16).padStart(2, '0')
+    + rgbColor[1].toString(16).padStart(2, '0')
+    + rgbColor[2].toString(16).padStart(2, '0');
+  return color;
+}
+
+setInterval(tick, 50);
+
+</script>
+
+</body>
+</html>
